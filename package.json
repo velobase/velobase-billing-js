@@ -1,0 +1,48 @@
+{
+  "name": "@velobaseai/billing",
+  "version": "0.1.0",
+  "description": "Velobase Billing SDK for JavaScript/TypeScript",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "velobase",
+    "billing",
+    "credits",
+    "api",
+    "sdk"
+  ],
+  "author": "Velobase",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/velobase/velobase-billing-js.git"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0"
+  }
+}

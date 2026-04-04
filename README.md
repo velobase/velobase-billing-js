@@ -34,23 +34,24 @@ const deposit = await vb.customers.deposit({
 const customer = await vb.customers.get('user_123');
 console.log(customer.balance.available); // 1000
 
-// 3. Freeze credits before doing work
+// 3. Generate businessId once and persist before freezing
+const businessId = `user_123_${crypto.randomUUID()}`;
+
+// 4. Freeze credits before doing work
 const freeze = await vb.billing.freeze({
   customerId: 'user_123',
   amount: 50,
-  businessId: 'job_abc',
+  businessId,
 });
 
-// 4a. Job succeeded — consume (supports partial)
+// 5a. Job succeeded — consume (supports partial)
 const consume = await vb.billing.consume({
-  businessId: 'job_abc',
+  businessId,
   actualAmount: 32, // only charge 32, return 18
 });
 
-// 4b. Or if the job failed — unfreeze to return all
-const unfreeze = await vb.billing.unfreeze({
-  businessId: 'job_abc',
-});
+// 5b. Or if the job failed — unfreeze to return all
+const unfreeze = await vb.billing.unfreeze({ businessId });
 ```
 
 ## How It Works
@@ -113,7 +114,9 @@ const result = await vb.customers.deposit({
 
 ```typescript
 const CUSTOMER = 'user_123';
-const JOB_ID = 'video_gen_001';
+
+// Generate businessId once and persist before freezing
+const businessId = `${CUSTOMER}_${crypto.randomUUID().replace(/-/g, '')}`;
 
 // Check balance before starting
 const before = await vb.customers.get(CUSTOMER);
@@ -123,7 +126,7 @@ console.log('Available:', before.balance.available);
 await vb.billing.freeze({
   customerId: CUSTOMER,
   amount: 100,
-  businessId: JOB_ID,
+  businessId,
   businessType: 'video_generation',
   description: '1080p video, ~60s',
 });
@@ -131,10 +134,7 @@ await vb.billing.freeze({
 // ... do the work ...
 
 // Settle with the actual cost (partial consumption)
-const result = await vb.billing.consume({
-  businessId: JOB_ID,
-  actualAmount: 73,
-});
+const result = await vb.billing.consume({ businessId, actualAmount: 73 });
 console.log('Charged:', result.consumedAmount);  // 73
 console.log('Returned:', result.returnedAmount); // 27
 
@@ -221,6 +221,41 @@ Release a frozen amount back to the customer.
 | `businessId` | `string` | Yes | The `businessId` from the freeze |
 
 **Returns:** `{ businessId, unfrozenAmount, unfreezeDetails, unfrozenAt, isIdempotentReplay }`
+
+## `businessId`
+
+`businessId` uniquely identifies one freeze → consume/unfreeze cycle and acts as its idempotency key. The server uses it to prevent double-charging on retries.
+
+**Recommended format: `{customerId}_{uuid}`**
+
+```typescript
+// Generate once per billing operation, then persist it
+const businessId = `${customerId}_${crypto.randomUUID().replace(/-/g, '')}`;
+// e.g. "user_123_a3f8c21d4e0b4a9f8c1d2e3f4a5b6c7d"
+```
+
+**Rules:**
+
+- **Generate once and store** — create the ID before calling `freeze()`, save it to your database, and reuse the same value on retries
+- **Never regenerate at the call site** — calling `crypto.randomUUID()` inside `freeze()` produces a different ID on every attempt, breaking idempotency
+- **Unique within your project** — two different billing operations must not share the same `businessId`
+
+```typescript
+// Wrong — new UUID on every call, idempotency broken on retry
+await vb.billing.freeze({
+  customerId,
+  amount: 50,
+  businessId: `${customerId}_${crypto.randomUUID()}`, // ❌ regenerated each time
+});
+
+// Correct — UUID generated once and persisted before calling freeze
+const businessId = await db.getOrCreateBusinessId(operationId, customerId);
+// e.g. returns existing ID or stores `${customerId}_${crypto.randomUUID()}` on first call
+
+await vb.billing.freeze({ customerId, amount: 50, businessId });
+// Safe to retry — same businessId returns the original result
+await vb.billing.freeze({ customerId, amount: 50, businessId });
+```
 
 ## Error Handling
 

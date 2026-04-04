@@ -9,6 +9,7 @@ export {
 } from "./errors";
 export type {
   VelobaseOptions,
+  BusinessType,
   FreezeParams,
   FreezeResponse,
   ConsumeParams,

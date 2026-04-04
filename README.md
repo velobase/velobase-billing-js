@@ -127,7 +127,7 @@ await vb.billing.freeze({
   customerId: CUSTOMER,
   amount: 100,
   businessId,
-  businessType: 'video_generation',
+  businessType: 'TASK',
   description: '1080p video, ~60s',
 });
 
@@ -196,7 +196,7 @@ Freeze credits before performing work.
 | `customerId` | `string` | Yes | Customer identifier |
 | `amount` | `number` | Yes | Amount to freeze (must be > 0) |
 | `businessId` | `string` | Yes | Your unique ID for this operation (idempotency key) |
-| `businessType` | `string` | No | Category label (e.g., `'video_generation'`) |
+| `businessType` | `BusinessType` | No | Business category. See [businessType](#businesstype) for accepted values. |
 | `description` | `string` | No | Human-readable description |
 
 **Returns:** `{ businessId, frozenAmount, freezeDetails, isIdempotentReplay }`
@@ -255,6 +255,44 @@ const businessId = await db.getOrCreateBusinessId(operationId, customerId);
 await vb.billing.freeze({ customerId, amount: 50, businessId });
 // Safe to retry — same businessId returns the original result
 await vb.billing.freeze({ customerId, amount: 50, businessId });
+```
+
+## businessType
+
+`businessType` is an optional field on `freeze()` that categorises the billing operation for analytics and reconciliation. The SDK validates the value client-side before sending the request.
+
+**Accepted values:**
+
+| Value | Description |
+|---|---|
+| `UNDEFINED` | Default / unclassified (server default when omitted) |
+| `TASK` | Async task execution (e.g. video generation, image processing) |
+| `ORDER` | One-time purchase or order fulfilment |
+| `MEMBERSHIP` | Membership plan credit grant |
+| `SUBSCRIPTION` | Subscription renewal credit grant |
+| `FREE_TRIAL` | Free-trial credit grant |
+| `ADMIN_GRANT` | Manually granted credits by an admin |
+
+Passing an unrecognised value throws an `Error` immediately — before any network request is made.
+
+```typescript
+import Velobase, { type BusinessType } from '@velobaseai/billing';
+
+const vb = new Velobase({ apiKey: 'vb_live_xxx' });
+
+await vb.billing.freeze({
+  customerId: 'user_123',
+  amount: 50,
+  businessId: 'job_abc',
+  businessType: 'TASK',        // ✅ IDE autocomplete + client-side validation
+});
+
+await vb.billing.freeze({
+  customerId: 'user_123',
+  amount: 50,
+  businessId: 'job_abc',
+  businessType: 'INVALID_VAL', // ❌ throws Error before making a network call
+});
 ```
 
 ## Error Handling

@@ -1,10 +1,44 @@
 // ─── Freeze ──────────────────────────────────────────────────────
 
+/**
+ * Enum values accepted by the server for `businessType`.
+ * Using `(string & {})` keeps the type open for forward-compatibility while
+ * still surfacing these literals in IDE autocomplete.
+ */
+export type BusinessType =
+  | 'UNDEFINED'
+  | 'TASK'
+  | 'ORDER'
+  | 'MEMBERSHIP'
+  | 'SUBSCRIPTION'
+  | 'FREE_TRIAL'
+  | 'ADMIN_GRANT'
+  | (string & {});
+
+const VALID_BUSINESS_TYPES = new Set([
+  'UNDEFINED',
+  'TASK',
+  'ORDER',
+  'MEMBERSHIP',
+  'SUBSCRIPTION',
+  'FREE_TRIAL',
+  'ADMIN_GRANT',
+]);
+
+export function assertBusinessType(value: string): void {
+  if (!VALID_BUSINESS_TYPES.has(value)) {
+    throw new Error(
+      `Invalid businessType: "${value}". ` +
+        `Must be one of: ${[...VALID_BUSINESS_TYPES].join(', ')}.`,
+    );
+  }
+}
+
 export interface FreezeParams {
   customerId: string;
   amount: number;
   businessId: string;
-  businessType?: string;
+  businessType?: BusinessType;
   description?: string;
 }
 

@@ -1,4 +1,7 @@
 import { HttpClient } from "./http";
+import {
+  assertBusinessType,
+} from "./types";
 import type {
   ConsumeParams,
   ConsumeResponse,
@@ -20,6 +23,9 @@ class BillingResource {
   constructor(private http: HttpClient) {}
 
   async freeze(params: FreezeParams): Promise<FreezeResponse> {
+    if (params.businessType !== undefined) {
+      assertBusinessType(params.businessType);
+    }
     return this.http.request<FreezeResponse>(
       "POST",
       "/v1/billing/freeze",

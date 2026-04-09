@@ -37,13 +37,14 @@ export function assertBusinessType(value: string): void {
 export interface FreezeParams {
   customerId: string;
   amount: number;
-  businessId: string;
+  transactionId: string;
+  creditTypes?: string[];
   businessType?: BusinessType;
   description?: string;
 }
 
 export interface FreezeResponse {
-  businessId: string;
+  transactionId: string;
   frozenAmount: number;
   freezeDetails: unknown[];
   isIdempotentReplay: boolean;
@@ -52,12 +53,12 @@ export interface FreezeResponse {
 // ─── Consume ─────────────────────────────────────────────────────
 
 export interface ConsumeParams {
-  businessId: string;
+  transactionId: string;
   actualAmount?: number;
 }
 
 export interface ConsumeResponse {
-  businessId: string;
+  transactionId: string;
   consumedAmount: number;
   returnedAmount?: number;
   consumeDetails: unknown[];
@@ -68,14 +69,33 @@ export interface ConsumeResponse {
 // ─── Unfreeze ────────────────────────────────────────────────────
 
 export interface UnfreezeParams {
-  businessId: string;
+  transactionId: string;
 }
 
 export interface UnfreezeResponse {
-  businessId: string;
+  transactionId: string;
   unfrozenAmount: number;
   unfreezeDetails: unknown[];
   unfrozenAt: string;
+  isIdempotentReplay: boolean;
+}
+
+// ─── Deduct ──────────────────────────────────────────────────────
+
+export interface DeductParams {
+  customerId: string;
+  amount: number;
+  transactionId: string;
+  creditTypes?: string[];
+  businessType?: BusinessType;
+  description?: string;
+}
+
+export interface DeductResponse {
+  transactionId: string;
+  deductedAmount: number;
+  deductDetails: unknown[];
+  deductedAt: string;
   isIdempotentReplay: boolean;
 }
 
@@ -84,6 +104,9 @@ export interface UnfreezeResponse {
 export interface DepositParams {
   customerId: string;
   amount: number;
+  creditType?: string;
+  startsAt?: string;
+  expiresAt?: string;
   idempotencyKey?: string;
   name?: string | null;
   email?: string | null;
@@ -94,8 +117,11 @@ export interface DepositParams {
 export interface DepositResponse {
   customerId: string;
   accountId: string;
+  creditType: string | null;
   totalAmount: number;
   addedAmount: number;
+  startsAt: string | null;
+  expiresAt: string | null;
   recordId: string;
   isIdempotentReplay: boolean;
 }
@@ -111,7 +137,7 @@ export interface CustomerBalance {
 
 export interface CustomerAccount {
   accountType: string;
-  subAccountType: string;
+  creditType: string;
   total: number;
   used: number;
   frozen: number;

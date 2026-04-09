@@ -16,6 +16,8 @@ export type {
   ConsumeResponse,
   UnfreezeParams,
   UnfreezeResponse,
+  DeductParams,
+  DeductResponse,
   DepositParams,
   DepositResponse,
   CustomerBalance,

@@ -34,24 +34,24 @@ const deposit = await vb.customers.deposit({
 const customer = await vb.customers.get('user_123');
 console.log(customer.balance.available); // 1000
 
-// 3. Generate businessId once and persist before freezing
-const businessId = `user_123_${crypto.randomUUID()}`;
+// 3. Generate transactionId once and persist before freezing
+const transactionId = `user_123_${crypto.randomUUID()}`;
 
 // 4. Freeze credits before doing work
 const freeze = await vb.billing.freeze({
   customerId: 'user_123',
   amount: 50,
-  businessId,
+  transactionId,
 });
 
 // 5a. Job succeeded — consume (supports partial)
 const consume = await vb.billing.consume({
-  businessId,
+  transactionId,
   actualAmount: 32, // only charge 32, return 18
 });
 
 // 5b. Or if the job failed — unfreeze to return all
-const unfreeze = await vb.billing.unfreeze({ businessId });
+const unfreeze = await vb.billing.unfreeze({ transactionId });
 ```
 
 ## How It Works
@@ -63,12 +63,19 @@ deposit → freeze → consume   (normal flow)
                  → unfreeze  (failure/cancellation)
 ```
 
-1. **Deposit** — Add credits to a customer's account. Creates the customer automatically on first deposit.
-2. **Freeze** — Pre-authorize an amount before performing work. The frozen credits are deducted from `available` but not yet `used`. Each freeze is identified by a unique `businessId` you provide.
+It also supports a **direct deduct** pattern for immediate deduction without freezing:
+
+```
+deposit → deduct  (immediate deduction)
+```
+
+1. **Deposit** — Add credits to a customer's account. Creates the customer automatically on first deposit. Supports `creditType` to specify the credit category, and `startsAt`/`expiresAt` for time-limited credits.
+2. **Freeze** — Pre-authorize an amount before performing work. The frozen credits are deducted from `available` but not yet `used`. Each freeze is identified by a unique `transactionId` you provide. Supports `creditTypes` to freeze from specific credit categories.
 3. **Consume** — After the work is done, settle the frozen amount. You can pass `actualAmount` to charge less than what was frozen; the difference is automatically returned.
 4. **Unfreeze** — If the work fails or is cancelled, release the full frozen amount back to the customer.
+5. **Deduct** — Directly deduct credits from a customer without freezing first. Useful for immediate charges. Supports `creditTypes` to deduct from specific credit categories.
 
-All write operations are **idempotent** — repeating the same `businessId` (freeze/consume/unfreeze) or `idempotencyKey` (deposit) returns the original result without double-charging.
+All write operations are **idempotent** — repeating the same `transactionId` (freeze/consume/unfreeze/deduct) or `idempotencyKey` (deposit) returns the original result without double-charging.
 
 ## Configuration
 
@@ -98,6 +105,22 @@ console.log(result.addedAmount);        // 500
 console.log(result.isIdempotentReplay); // false on first call, true on retries
 ```
 
+### Deposit with credit type and expiry
+
+```typescript
+const result = await vb.customers.deposit({
+  customerId: 'user_123',
+  amount: 1000,
+  creditType: 'BONUS',
+  startsAt: '2025-01-01T00:00:00Z',
+  expiresAt: '2025-12-31T23:59:59Z',
+  description: 'Annual bonus credits',
+});
+console.log(result.creditType); // 'BONUS'
+console.log(result.startsAt);  // '2025-01-01T00:00:00.000Z'
+console.log(result.expiresAt); // '2025-12-31T23:59:59.000Z'
+```
+
 ### Deposit with customer metadata
 
 ```typescript
@@ -110,13 +133,13 @@ const result = await vb.customers.deposit({
 });
 ```
 
-### Full billing flow
+### Full billing flow (freeze-then-consume)
 
 ```typescript
 const CUSTOMER = 'user_123';
 
-// Generate businessId once and persist before freezing
-const businessId = `${CUSTOMER}_${crypto.randomUUID().replace(/-/g, '')}`;
+// Generate transactionId once and persist before freezing
+const transactionId = `${CUSTOMER}_${crypto.randomUUID().replace(/-/g, '')}`;
 
 // Check balance before starting
 const before = await vb.customers.get(CUSTOMER);
@@ -126,7 +149,7 @@ console.log('Available:', before.balance.available);
 await vb.billing.freeze({
   customerId: CUSTOMER,
   amount: 100,
-  businessId,
+  transactionId,
   businessType: 'TASK',
   description: '1080p video, ~60s',
 });
@@ -134,13 +157,42 @@ await vb.billing.freeze({
 // ... do the work ...
 
 // Settle with the actual cost (partial consumption)
-const result = await vb.billing.consume({ businessId, actualAmount: 73 });
+const result = await vb.billing.consume({ transactionId, actualAmount: 73 });
 console.log('Charged:', result.consumedAmount);  // 73
 console.log('Returned:', result.returnedAmount); // 27
 
 // Verify final balance
 const after = await vb.customers.get(CUSTOMER);
 console.log('Available:', after.balance.available);
+```
+
+### Direct deduct (without freezing)
+
+```typescript
+const CUSTOMER = 'user_123';
+const transactionId = 'api_call_001';
+
+const result = await vb.billing.deduct({
+  customerId: CUSTOMER,
+  amount: 5,
+  transactionId,
+  businessType: 'TASK',
+  description: 'API call charge',
+});
+console.log('Deducted:', result.deductedAmount); // 5
+console.log('At:', result.deductedAt);
+```
+
+### Freeze with creditTypes filter
+
+```typescript
+// Only freeze from specific credit categories
+const freeze = await vb.billing.freeze({
+  customerId: 'user_123',
+  amount: 50,
+  transactionId: 'job_abc',
+  creditTypes: ['BONUS', 'DEFAULT'],
+});
 ```
 
 ### Customer balance structure
@@ -156,10 +208,11 @@ customer.balance.available; // total - used - frozen
 
 // Individual accounts (e.g., different credit types/expiry)
 for (const account of customer.accounts) {
-  console.log(account.accountType);    // 'CREDIT'
-  console.log(account.subAccountType); // 'DEFAULT'
+  console.log(account.accountType); // 'CREDIT'
+  console.log(account.creditType);  // 'DEFAULT', 'BONUS', etc.
   console.log(account.available);
-  console.log(account.expiresAt);      // null or ISO date string
+  console.log(account.startsAt);    // null or ISO date string
+  console.log(account.expiresAt);   // null or ISO date string
 }
 ```
 
@@ -173,13 +226,16 @@ Deposit credits. Creates the customer if they don't exist.
 |---|---|---|---|
 | `customerId` | `string` | Yes | Your unique customer identifier |
 | `amount` | `number` | Yes | Amount to deposit (must be > 0) |
+| `creditType` | `string` | No | Credit category (e.g. "DEFAULT", "BONUS"). Defaults to "DEFAULT" on server. |
+| `startsAt` | `string` | No | ISO datetime string. When the credits become active. |
+| `expiresAt` | `string` | No | ISO datetime string. When the credits expire. Must be after `startsAt`. |
 | `idempotencyKey` | `string` | No | Prevents duplicate deposits on retry |
 | `name` | `string \| null` | No | Customer display name |
 | `email` | `string \| null` | No | Customer email |
 | `metadata` | `object` | No | Arbitrary key-value metadata |
 | `description` | `string` | No | Description for the deposit |
 
-**Returns:** `{ customerId, accountId, totalAmount, addedAmount, recordId, isIdempotentReplay }`
+**Returns:** `{ customerId, accountId, creditType, totalAmount, addedAmount, startsAt, expiresAt, recordId, isIdempotentReplay }`
 
 ### `vb.customers.get(customerId): Promise<CustomerResponse>`
 
@@ -195,11 +251,12 @@ Freeze credits before performing work.
 |---|---|---|---|
 | `customerId` | `string` | Yes | Customer identifier |
 | `amount` | `number` | Yes | Amount to freeze (must be > 0) |
-| `businessId` | `string` | Yes | Your unique ID for this operation (idempotency key) |
+| `transactionId` | `string` | Yes | Your unique ID for this operation (idempotency key) |
+| `creditTypes` | `string[]` | No | Restrict freeze to specific credit categories |
 | `businessType` | `BusinessType` | No | Business category. See [businessType](#businesstype) for accepted values. |
 | `description` | `string` | No | Human-readable description |
 
-**Returns:** `{ businessId, frozenAmount, freezeDetails, isIdempotentReplay }`
+**Returns:** `{ transactionId, frozenAmount, freezeDetails, isIdempotentReplay }`
 
 ### `vb.billing.consume(params): Promise<ConsumeResponse>`
 
@@ -207,10 +264,10 @@ Settle a frozen amount. Supports partial consumption.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `businessId` | `string` | Yes | The `businessId` from the freeze |
+| `transactionId` | `string` | Yes | The `transactionId` from the freeze |
 | `actualAmount` | `number` | No | Actual amount to charge. Defaults to full frozen amount. |
 
-**Returns:** `{ businessId, consumedAmount, returnedAmount, consumeDetails, consumedAt, isIdempotentReplay }`
+**Returns:** `{ transactionId, consumedAmount, returnedAmount, consumeDetails, consumedAt, isIdempotentReplay }`
 
 ### `vb.billing.unfreeze(params): Promise<UnfreezeResponse>`
 
@@ -218,48 +275,63 @@ Release a frozen amount back to the customer.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `businessId` | `string` | Yes | The `businessId` from the freeze |
+| `transactionId` | `string` | Yes | The `transactionId` from the freeze |
 
-**Returns:** `{ businessId, unfrozenAmount, unfreezeDetails, unfrozenAt, isIdempotentReplay }`
+**Returns:** `{ transactionId, unfrozenAmount, unfreezeDetails, unfrozenAt, isIdempotentReplay }`
 
-## `businessId`
+### `vb.billing.deduct(params): Promise<DeductResponse>`
 
-`businessId` uniquely identifies one freeze → consume/unfreeze cycle and acts as its idempotency key. The server uses it to prevent double-charging on retries.
+Directly deduct credits without freezing first. Useful for immediate charges.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `customerId` | `string` | Yes | Customer identifier |
+| `amount` | `number` | Yes | Amount to deduct (must be > 0) |
+| `transactionId` | `string` | Yes | Your unique ID for this operation (idempotency key) |
+| `creditTypes` | `string[]` | No | Restrict deduction to specific credit categories |
+| `businessType` | `BusinessType` | No | Business category. See [businessType](#businesstype) for accepted values. |
+| `description` | `string` | No | Human-readable description |
+
+**Returns:** `{ transactionId, deductedAmount, deductDetails, deductedAt, isIdempotentReplay }`
+
+## `transactionId`
+
+`transactionId` uniquely identifies one billing operation (freeze → consume/unfreeze cycle, or a single deduct) and acts as its idempotency key. The server uses it to prevent double-charging on retries.
 
 **Recommended format: `{customerId}_{uuid}`**
 
 ```typescript
 // Generate once per billing operation, then persist it
-const businessId = `${customerId}_${crypto.randomUUID().replace(/-/g, '')}`;
+const transactionId = `${customerId}_${crypto.randomUUID().replace(/-/g, '')}`;
 // e.g. "user_123_a3f8c21d4e0b4a9f8c1d2e3f4a5b6c7d"
 ```
 
 **Rules:**
 
-- **Generate once and store** — create the ID before calling `freeze()`, save it to your database, and reuse the same value on retries
+- **Generate once and store** — create the ID before calling `freeze()` or `deduct()`, save it to your database, and reuse the same value on retries
 - **Never regenerate at the call site** — calling `crypto.randomUUID()` inside `freeze()` produces a different ID on every attempt, breaking idempotency
-- **Unique within your project** — two different billing operations must not share the same `businessId`
+- **Unique within your project** — two different billing operations must not share the same `transactionId`
 
 ```typescript
 // Wrong — new UUID on every call, idempotency broken on retry
 await vb.billing.freeze({
   customerId,
   amount: 50,
-  businessId: `${customerId}_${crypto.randomUUID()}`, // ❌ regenerated each time
+  transactionId: `${customerId}_${crypto.randomUUID()}`, // ❌ regenerated each time
 });
 
 // Correct — UUID generated once and persisted before calling freeze
-const businessId = await db.getOrCreateBusinessId(operationId, customerId);
+const transactionId = await db.getOrCreateTransactionId(operationId, customerId);
 // e.g. returns existing ID or stores `${customerId}_${crypto.randomUUID()}` on first call
 
-await vb.billing.freeze({ customerId, amount: 50, businessId });
-// Safe to retry — same businessId returns the original result
-await vb.billing.freeze({ customerId, amount: 50, businessId });
+await vb.billing.freeze({ customerId, amount: 50, transactionId });
+// Safe to retry — same transactionId returns the original result
+await vb.billing.freeze({ customerId, amount: 50, transactionId });
 ```
 
 ## businessType
 
-`businessType` is an optional field on `freeze()` that categorises the billing operation for analytics and reconciliation. The SDK validates the value client-side before sending the request.
+`businessType` is an optional field on `freeze()` and `deduct()` that categorises the billing operation for analytics and reconciliation. The SDK validates the value client-side before sending the request.
 
 **Accepted values:**
 
@@ -283,14 +355,14 @@ const vb = new Velobase({ apiKey: 'vb_live_xxx' });
 await vb.billing.freeze({
   customerId: 'user_123',
   amount: 50,
-  businessId: 'job_abc',
+  transactionId: 'job_abc',
   businessType: 'TASK',        // ✅ IDE autocomplete + client-side validation
 });
 
 await vb.billing.freeze({
   customerId: 'user_123',
   amount: 50,
-  businessId: 'job_abc',
+  transactionId: 'job_abc',
   businessType: 'INVALID_VAL', // ❌ throws Error before making a network call
 });
 ```
@@ -311,7 +383,7 @@ try {
   await vb.billing.freeze({
     customerId: 'user_123',
     amount: 999999,
-    businessId: 'job_xyz',
+    transactionId: 'job_xyz',
   });
 } catch (err) {
   if (err instanceof VelobaseValidationError) {

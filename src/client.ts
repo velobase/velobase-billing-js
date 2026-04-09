@@ -6,6 +6,8 @@ import type {
   ConsumeParams,
   ConsumeResponse,
   CustomerResponse,
+  DeductParams,
+  DeductResponse,
   DepositParams,
   DepositResponse,
   FreezeParams,
@@ -45,6 +47,17 @@ class BillingResource {
     return this.http.request<UnfreezeResponse>(
       "POST",
       "/v1/billing/unfreeze",
+      params,
+    );
+  }
+
+  async deduct(params: DeductParams): Promise<DeductResponse> {
+    if (params.businessType !== undefined) {
+      assertBusinessType(params.businessType);
+    }
+    return this.http.request<DeductResponse>(
+      "POST",
+      "/v1/billing/deduct",
       params,
     );
   }

@@ -44,7 +44,7 @@ function assert(cond, msg) {
 // Unique prefix per run to avoid collision
 const RUN = `ts_${Date.now().toString(36)}`;
 
-// ─── Tests ──────────────────────────────────────���────────────────
+// ─── Tests ───────────────────────────────────────────────────────
 
 async function run() {
   // ===================== 1. AUTH =====================
@@ -77,7 +77,7 @@ async function run() {
   console.log("  1.3 Random string → 401");
   try {
     const vb = new Velobase({ apiKey: "garbage", baseUrl: BASE_URL });
-    await vb.billing.freeze({ customerId: "x", amount: 1, businessId: "b" });
+    await vb.billing.freeze({ customerId: "x", amount: 1, transactionId: "b" });
     assert(false, "should have thrown");
   } catch (e) {
     assert(e instanceof VelobaseAuthenticationError, "instanceof VelobaseAuthenticationError");
@@ -126,7 +126,7 @@ async function run() {
   assert(cust1.balance.available === 1000, "available=1000");
   assert(cust1.accounts.length >= 1, "has accounts");
   assert(cust1.accounts[0].accountType === "CREDIT", "accountType=CREDIT");
-  assert(cust1.accounts[0].subAccountType === "DEFAULT", "subAccountType=DEFAULT");
+  assert(cust1.accounts[0].creditType === "default", "creditType=default");
   assert(typeof cust1.createdAt === "string", "has createdAt");
   console.log(`      OK: balance=${JSON.stringify(cust1.balance)}`);
 
@@ -154,14 +154,14 @@ async function run() {
   console.log("══════════════════════════════════");
 
   console.log("\n  3.1 Freeze 600");
-  const biz1 = `${RUN}_biz1`;
+  const txn1 = `${RUN}_txn1`;
   const frz1 = await vb.billing.freeze({
     customerId: CUSTOMER,
     amount: 600,
-    businessId: biz1,
+    transactionId: txn1,
     description: "Video generation job",
   });
-  assert(frz1.businessId === biz1, "businessId matches");
+  assert(frz1.transactionId === txn1, "transactionId matches");
   assert(frz1.frozenAmount === 600, "frozenAmount=600");
   assert(frz1.isIdempotentReplay === false, "not replay");
   assert(Array.isArray(frz1.freezeDetails) && frz1.freezeDetails.length > 0, "has freezeDetails");
@@ -173,21 +173,21 @@ async function run() {
   assert(cust2.balance.available === 900, "available=900");
   console.log(`      OK: frozen=${cust2.balance.frozen} available=${cust2.balance.available}`);
 
-  console.log("  3.3 Idempotent freeze (same businessId)");
+  console.log("  3.3 Idempotent freeze (same transactionId)");
   const frz1b = await vb.billing.freeze({
     customerId: CUSTOMER,
     amount: 600,
-    businessId: biz1,
+    transactionId: txn1,
   });
   assert(frz1b.isIdempotentReplay === true, "is replay");
   console.log(`      OK: isIdempotentReplay=${frz1b.isIdempotentReplay}`);
 
   console.log("  3.4 Partial consume: 400 of 600 frozen");
   const con1 = await vb.billing.consume({
-    businessId: biz1,
+    transactionId: txn1,
     actualAmount: 400,
   });
-  assert(con1.businessId === biz1, "businessId matches");
+  assert(con1.transactionId === txn1, "transactionId matches");
   assert(con1.consumedAmount === 400, "consumedAmount=400");
   assert(con1.returnedAmount === 200, "returnedAmount=200");
   assert(con1.isIdempotentReplay === false, "not replay");
@@ -204,13 +204,13 @@ async function run() {
   console.log(`      OK: ${JSON.stringify(cust3.balance)}`);
 
   console.log("  3.6 Freeze 300 → Unfreeze (full return)");
-  const biz2 = `${RUN}_biz2`;
-  await vb.billing.freeze({ customerId: CUSTOMER, amount: 300, businessId: biz2 });
+  const txn2 = `${RUN}_txn2`;
+  await vb.billing.freeze({ customerId: CUSTOMER, amount: 300, transactionId: txn2 });
   const cust4 = await vb.customers.get(CUSTOMER);
   assert(cust4.balance.frozen === 300, "frozen=300 after freeze");
   assert(cust4.balance.available === 800, "available=800 after freeze");
-  const unf1 = await vb.billing.unfreeze({ businessId: biz2 });
-  assert(unf1.businessId === biz2, "businessId matches");
+  const unf1 = await vb.billing.unfreeze({ transactionId: txn2 });
+  assert(unf1.transactionId === txn2, "transactionId matches");
   assert(unf1.unfrozenAmount === 300, "unfrozenAmount=300");
   assert(unf1.isIdempotentReplay === false, "not replay");
   assert(typeof unf1.unfrozenAt === "string", "has unfrozenAt");
@@ -221,15 +221,63 @@ async function run() {
   console.log(`      OK: unfrozen=${unf1.unfrozenAmount} → balance=${JSON.stringify(cust5.balance)}`);
 
   console.log("  3.7 Full consume (no actualAmount specified)");
-  const biz3 = `${RUN}_biz3`;
-  await vb.billing.freeze({ customerId: CUSTOMER, amount: 200, businessId: biz3 });
-  const con2 = await vb.billing.consume({ businessId: biz3 });
+  const txn3 = `${RUN}_txn3`;
+  await vb.billing.freeze({ customerId: CUSTOMER, amount: 200, transactionId: txn3 });
+  const con2 = await vb.billing.consume({ transactionId: txn3 });
   assert(con2.consumedAmount === 200, "consumedAmount=200");
   assert(con2.returnedAmount === undefined || con2.returnedAmount === 0, "returnedAmount=undefined|0");
   const cust6 = await vb.customers.get(CUSTOMER);
   assert(cust6.balance.used === 600, "used=600");
   assert(cust6.balance.available === 900, "available=900");
   console.log(`      OK: consumed=${con2.consumedAmount} returned=${con2.returnedAmount} → avail=${cust6.balance.available}`);
+
+  // ===================== 3B. DEDUCT FLOW =====================
+  console.log("\n══════════════════════════════════");
+  console.log(" 3B. DEDUCT FLOW");
+  console.log("══════════════════════════════════");
+
+  console.log("\n  3B.1 Direct deduct 50");
+  const txnD1 = `${RUN}_deduct1`;
+  const ded1 = await vb.billing.deduct({
+    customerId: CUSTOMER,
+    amount: 50,
+    transactionId: txnD1,
+    businessType: "TASK",
+    description: "API call charge",
+  });
+  assert(ded1.transactionId === txnD1, "transactionId matches");
+  assert(ded1.deductedAmount === 50, "deductedAmount=50");
+  assert(ded1.isIdempotentReplay === false, "not replay");
+  assert(typeof ded1.deductedAt === "string", "has deductedAt");
+  assert(Array.isArray(ded1.deductDetails) && ded1.deductDetails.length > 0, "has deductDetails");
+  console.log(`      OK: deducted=${ded1.deductedAmount}`);
+
+  console.log("  3B.2 Balance after deduct");
+  const cust7 = await vb.customers.get(CUSTOMER);
+  assert(cust7.balance.used === 650, "used=650");
+  assert(cust7.balance.available === 850, "available=850");
+  console.log(`      OK: used=${cust7.balance.used} available=${cust7.balance.available}`);
+
+  console.log("  3B.3 Idempotent deduct (same transactionId)");
+  const ded1b = await vb.billing.deduct({
+    customerId: CUSTOMER,
+    amount: 50,
+    transactionId: txnD1,
+  });
+  assert(ded1b.isIdempotentReplay === true, "is replay");
+  const cust7b = await vb.customers.get(CUSTOMER);
+  assert(cust7b.balance.available === 850, "available still 850");
+  console.log(`      OK: replay=${ded1b.isIdempotentReplay} available=${cust7b.balance.available}`);
+
+  console.log("  3B.4 Deduct insufficient balance");
+  try {
+    await vb.billing.deduct({ customerId: CUSTOMER, amount: 999999, transactionId: `${RUN}_deduct_fail` });
+    assert(false, "should throw");
+  } catch (e) {
+    assert(e instanceof VelobaseValidationError, "instanceof VelobaseValidationError");
+    assert(e.status === 400, "status=400");
+    console.log(`      OK: ${e.constructor.name} "${e.message}"`);
+  }
 
   // ===================== 4. ERROR HANDLING =====================
   console.log("\n══════════════════════════════════");
@@ -238,7 +286,7 @@ async function run() {
 
   console.log("\n  4.1 Insufficient balance");
   try {
-    await vb.billing.freeze({ customerId: CUSTOMER, amount: 999999, businessId: `${RUN}_fail1` });
+    await vb.billing.freeze({ customerId: CUSTOMER, amount: 999999, transactionId: `${RUN}_fail1` });
     assert(false, "should throw");
   } catch (e) {
     assert(e instanceof VelobaseValidationError, "instanceof VelobaseValidationError");
@@ -246,9 +294,9 @@ async function run() {
     console.log(`      OK: ${e.constructor.name} "${e.message}"`);
   }
 
-  console.log("  4.2 Consume non-existent businessId");
+  console.log("  4.2 Consume non-existent transactionId");
   try {
-    await vb.billing.consume({ businessId: "nonexistent_biz_id" });
+    await vb.billing.consume({ transactionId: "nonexistent_txn_id" });
     assert(false, "should throw");
   } catch (e) {
     assert(e instanceof VelobaseError, "instanceof VelobaseError");
@@ -276,16 +324,16 @@ async function run() {
 
   console.log("  4.5 Freeze with empty customerId");
   try {
-    await vb.billing.freeze({ customerId: "", amount: 100, businessId: "x" });
+    await vb.billing.freeze({ customerId: "", amount: 100, transactionId: "x" });
     assert(false, "should throw");
   } catch (e) {
     assert(e instanceof VelobaseValidationError, "instanceof VelobaseValidationError");
     console.log(`      OK: ${e.constructor.name} "${e.message}"`);
   }
 
-  console.log("  4.6 Unfreeze non-existent businessId");
+  console.log("  4.6 Unfreeze non-existent transactionId");
   try {
-    await vb.billing.unfreeze({ businessId: "nonexistent_biz_id" });
+    await vb.billing.unfreeze({ transactionId: "nonexistent_txn_id" });
     assert(false, "should throw");
   } catch (e) {
     assert(e instanceof VelobaseError, "instanceof VelobaseError");

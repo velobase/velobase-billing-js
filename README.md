@@ -74,6 +74,7 @@ deposit → deduct  (immediate deduction)
 3. **Consume** — After the work is done, settle the frozen amount. You can pass `actualAmount` to charge less than what was frozen; the difference is automatically returned.
 4. **Unfreeze** — If the work fails or is cancelled, release the full frozen amount back to the customer.
 5. **Deduct** — Directly deduct credits from a customer without freezing first. Useful for immediate charges. Supports `creditTypes` to deduct from specific credit categories.
+6. **Ledger** — Query a customer's transaction history with filtering and cursor-based pagination.
 
 All write operations are **idempotent** — repeating the same `transactionId` (freeze/consume/unfreeze/deduct) or `idempotencyKey` (deposit) returns the original result without double-charging.
 
@@ -195,6 +196,29 @@ const freeze = await vb.billing.freeze({
 });
 ```
 
+### Query transaction ledger
+
+```typescript
+// List all ledger entries (default limit=20)
+const ledger = await vb.customers.ledger('user_123');
+for (const entry of ledger.items) {
+  console.log(entry.operationType, entry.amount, entry.creditType, entry.createdAt);
+}
+console.log('Total:', ledger.totalCount);
+
+// Filter by operation type
+const grants = await vb.customers.ledger('user_123', { operationType: 'GRANT' });
+
+// Filter by transactionId
+const txnEntries = await vb.customers.ledger('user_123', { transactionId: 'job_abc' });
+
+// Paginate with cursor
+const page1 = await vb.customers.ledger('user_123', { limit: 10 });
+if (page1.hasMore) {
+  const page2 = await vb.customers.ledger('user_123', { limit: 10, cursor: page1.nextCursor });
+}
+```
+
 ### Customer balance structure
 
 ```typescript
@@ -242,6 +266,22 @@ Deposit credits. Creates the customer if they don't exist.
 Retrieve a customer's balance and account details.
 
 **Returns:** `{ id, name, email, metadata, balance, accounts, createdAt }`
+
+### `vb.customers.ledger(customerId, params?): Promise<LedgerResponse>`
+
+Query a customer's transaction history with filtering and cursor-based pagination.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `customerId` | `string` | Yes | Customer identifier (positional) |
+| `params.limit` | `number` | No | Page size (1–100, default 20) |
+| `params.cursor` | `string` | No | Cursor from a previous `nextCursor` for pagination |
+| `params.operationType` | `string` | No | Filter by operation type: `FREEZE`, `CONSUME`, `UNFREEZE`, `GRANT`, `EXPIRE` |
+| `params.transactionId` | `string` | No | Filter by transaction ID |
+
+**Returns:** `{ items: LedgerEntry[], totalCount, hasMore, nextCursor }`
+
+Each `LedgerEntry` has: `id`, `operationType`, `amount`, `creditType`, `transactionId`, `businessType`, `description`, `accountId`, `status`, `createdAt`
 
 ### `vb.billing.freeze(params): Promise<FreezeResponse>`
 

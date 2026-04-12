@@ -156,6 +156,35 @@ export interface CustomerResponse {
   createdAt: string;
 }
 
+// ─── Ledger ─────────────────────────────────────────────────────
+
+export interface LedgerParams {
+  limit?: number;
+  cursor?: string;
+  operationType?: string;
+  transactionId?: string;
+}
+
+export interface LedgerEntry {
+  id: string;
+  operationType: string;
+  amount: number;
+  creditType: string;
+  transactionId: string | null;
+  businessType: string;
+  description: string | null;
+  accountId: string;
+  status: string;
+  createdAt: string;
+}
+
+export interface LedgerResponse {
+  items: LedgerEntry[];
+  totalCount: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
 // ─── Client Options ──────────────────────────────────────────────
 
 export interface VelobaseOptions {

@@ -279,6 +279,65 @@ async function run() {
     console.log(`      OK: ${e.constructor.name} "${e.message}"`);
   }
 
+  // ===================== 3C. LEDGER =====================
+  console.log("\n══════════════════════════════════");
+  console.log(" 3C. LEDGER");
+  console.log("══════════════════════════════════");
+
+  console.log("\n  3C.1 List all ledger entries");
+  const ledger1 = await vb.customers.ledger(CUSTOMER);
+  assert(Array.isArray(ledger1.items), "items is array");
+  assert(ledger1.totalCount > 0, "totalCount > 0");
+  assert(typeof ledger1.hasMore === "boolean", "hasMore is boolean");
+  console.log(`      OK: totalCount=${ledger1.totalCount} items=${ledger1.items.length}`);
+
+  console.log("  3C.2 Verify ledger entry fields");
+  const entry = ledger1.items[0];
+  assert(typeof entry.id === "string" && entry.id.length > 0, "has id");
+  assert(["FREEZE", "CONSUME", "UNFREEZE", "GRANT", "EXPIRE"].includes(entry.operationType), "valid operationType");
+  assert(typeof entry.amount === "number", "amount is number");
+  assert(typeof entry.creditType === "string", "has creditType");
+  assert(typeof entry.businessType === "string", "has businessType");
+  assert(typeof entry.accountId === "string", "has accountId");
+  assert(typeof entry.status === "string", "has status");
+  assert(typeof entry.createdAt === "string", "has createdAt");
+  console.log(`      OK: op=${entry.operationType} amount=${entry.amount} creditType=${entry.creditType}`);
+
+  console.log("  3C.3 Filter by operationType=GRANT");
+  const ledger2 = await vb.customers.ledger(CUSTOMER, { operationType: "GRANT" });
+  assert(ledger2.items.length > 0, "has GRANT entries");
+  assert(ledger2.items.every(e => e.operationType === "GRANT"), "all entries are GRANT");
+  console.log(`      OK: GRANT entries=${ledger2.items.length}`);
+
+  console.log("  3C.4 Filter by transactionId");
+  const ledger3 = await vb.customers.ledger(CUSTOMER, { transactionId: txn1 });
+  assert(ledger3.items.length > 0, "has entries for txn1");
+  assert(ledger3.items.every(e => e.transactionId === txn1), "all entries match txn1");
+  console.log(`      OK: entries for txn1=${ledger3.items.length}`);
+
+  console.log("  3C.5 Pagination with limit");
+  const ledger4 = await vb.customers.ledger(CUSTOMER, { limit: 2 });
+  assert(ledger4.items.length <= 2, "items <= 2");
+  if (ledger4.hasMore) {
+    assert(ledger4.nextCursor !== null, "has nextCursor when hasMore");
+    const ledger5 = await vb.customers.ledger(CUSTOMER, { limit: 2, cursor: ledger4.nextCursor });
+    assert(ledger5.items.length > 0, "second page has items");
+    assert(ledger5.items[0].id !== ledger4.items[0].id, "different items on page 2");
+    console.log(`      OK: page1=${ledger4.items.length} page2=${ledger5.items.length}`);
+  } else {
+    console.log(`      OK: all items fit in one page (${ledger4.items.length})`);
+  }
+
+  console.log("  3C.6 Ledger for non-existent customer → 404");
+  try {
+    await vb.customers.ledger("nonexistent_ghost_user");
+    assert(false, "should throw");
+  } catch (e) {
+    assert(e instanceof VelobaseNotFoundError, "instanceof VelobaseNotFoundError");
+    assert(e.status === 404, "status=404");
+    console.log(`      OK: ${e.constructor.name} "${e.message}"`);
+  }
+
   // ===================== 4. ERROR HANDLING =====================
   console.log("\n══════════════════════════════════");
   console.log(" 4. ERROR HANDLING");

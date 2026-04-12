@@ -23,6 +23,9 @@ export type {
   CustomerBalance,
   CustomerAccount,
   CustomerResponse,
+  LedgerParams,
+  LedgerEntry,
+  LedgerResponse,
 } from "./types";
 
 // default export for convenience

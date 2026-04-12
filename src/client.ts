@@ -12,6 +12,8 @@ import type {
   DepositResponse,
   FreezeParams,
   FreezeResponse,
+  LedgerParams,
+  LedgerResponse,
   UnfreezeParams,
   UnfreezeResponse,
   VelobaseOptions,
@@ -84,6 +86,21 @@ class CustomersResource {
       "GET",
       `/v1/customers/${encodeURIComponent(customerId)}`,
     );
+  }
+
+  async ledger(
+    customerId: string,
+    params?: LedgerParams,
+  ): Promise<LedgerResponse> {
+    const qs = new URLSearchParams();
+    if (params?.limit !== undefined) qs.set("limit", String(params.limit));
+    if (params?.cursor) qs.set("cursor", params.cursor);
+    if (params?.operationType) qs.set("operation_type", params.operationType);
+    if (params?.transactionId) qs.set("transaction_id", params.transactionId);
+
+    const query = qs.toString();
+    const path = `/v1/customers/${encodeURIComponent(customerId)}/ledger${query ? `?${query}` : ""}`;
+    return this.http.request<LedgerResponse>("GET", path);
   }
 }
 

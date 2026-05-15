@@ -1,11 +1,9 @@
 export { Velobase } from "./client";
-export {
-  VelobaseError,
-  VelobaseAuthenticationError,
-  VelobaseValidationError,
-  VelobaseNotFoundError,
-  VelobaseConflictError,
-  VelobaseInternalError,
+export { VelobaseError, isVelobaseError } from "./errors";
+export type {
+  VelobaseErrorCode,
+  VelobaseErrorType,
+  VelobaseErrorInit,
 } from "./errors";
 export type {
   VelobaseOptions,

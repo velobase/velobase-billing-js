@@ -1,46 +1,70 @@
-export class VelobaseError extends Error {
+import type { VelobaseErrorCode, VelobaseErrorType } from "./codes.generated";
+
+export type { VelobaseErrorCode, VelobaseErrorType };
+
+/**
+ * The single error class the SDK ever throws for a non-2xx response.
+ *
+ * Carries every piece of context the server transmits in the error
+ * body (`code`, `type`, `details`, `retryable`, `request_id`) plus
+ * the HTTP `status`. Clients should branch on `err.code` for precise
+ * behaviour and fall back to `err.type` for broader categories.
+ *
+ * Network failures (DNS, socket reset, timeout) also surface as
+ * `VelobaseError` with `code: "network_error"`, `status: 0`, and
+ * `retryable: true`.
+ */
+export interface VelobaseErrorInit {
+  code: VelobaseErrorCode;
+  type: VelobaseErrorType;
   status: number;
-  type: string;
+  message: string;
+  details?: Record<string, unknown>;
+  retryable?: boolean;
+  requestId?: string;
+  cause?: unknown;
+}
 
-  constructor(message: string, status: number, type: string) {
-    super(message);
+export class VelobaseError extends Error {
+  readonly code: VelobaseErrorCode;
+  readonly type: VelobaseErrorType;
+  readonly status: number;
+  readonly details: Record<string, unknown>;
+  readonly retryable: boolean;
+  readonly requestId?: string;
+  readonly cause?: unknown;
+
+  constructor(init: VelobaseErrorInit) {
+    super(init.message);
     this.name = "VelobaseError";
-    this.status = status;
-    this.type = type;
+    this.code = init.code;
+    this.type = init.type;
+    this.status = init.status;
+    this.details = init.details ?? {};
+    this.retryable = init.retryable ?? defaultRetryableFor(init.status);
+    this.requestId = init.requestId;
+    this.cause = init.cause;
+  }
+
+  /** Precise check by code. Prefer this over `instanceof` subclasses. */
+  is(code: VelobaseErrorCode): boolean {
+    return this.code === code;
+  }
+
+  /** Coarser check by category. */
+  isType(type: VelobaseErrorType): boolean {
+    return this.type === type;
   }
 }
 
-export class VelobaseAuthenticationError extends VelobaseError {
-  constructor(message: string) {
-    super(message, 401, "auth_error");
-    this.name = "VelobaseAuthenticationError";
-  }
+function defaultRetryableFor(status: number): boolean {
+  // 5xx and 429 are conventionally retryable. The server's `retryable`
+  // flag is preferred when present; this only kicks in for synthesized
+  // errors (e.g. network failures from `request()`).
+  return status >= 500 || status === 429 || status === 0;
 }
 
-export class VelobaseValidationError extends VelobaseError {
-  constructor(message: string) {
-    super(message, 400, "validation_error");
-    this.name = "VelobaseValidationError";
-  }
-}
-
-export class VelobaseNotFoundError extends VelobaseError {
-  constructor(message: string) {
-    super(message, 404, "not_found");
-    this.name = "VelobaseNotFoundError";
-  }
-}
-
-export class VelobaseConflictError extends VelobaseError {
-  constructor(message: string) {
-    super(message, 409, "conflict");
-    this.name = "VelobaseConflictError";
-  }
-}
-
-export class VelobaseInternalError extends VelobaseError {
-  constructor(message: string) {
-    super(message, 500, "server_error");
-    this.name = "VelobaseInternalError";
-  }
+/** Type guard. Works across module boundaries (Symbol-based check). */
+export function isVelobaseError(value: unknown): value is VelobaseError {
+  return value instanceof Error && value.name === "VelobaseError";
 }

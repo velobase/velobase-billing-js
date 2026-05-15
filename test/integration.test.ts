@@ -12,13 +12,7 @@
  * against the same database don't collide.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  Velobase,
-  VelobaseAuthenticationError,
-  VelobaseError,
-  VelobaseNotFoundError,
-  VelobaseValidationError,
-} from "../src/index";
+import { Velobase, VelobaseError } from "../src/index";
 
 const API_KEY = process.env.API_KEY ?? "";
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:3002";
@@ -57,11 +51,14 @@ describeIf("auth", () => {
     expect(() => new Velobase({ apiKey: "" })).toThrowError(/apiKey is required/);
   });
 
-  it("invalid apiKey → 401 VelobaseAuthenticationError", async () => {
+  it("invalid apiKey → 401 with code=invalid_api_key", async () => {
     const bad = new Velobase({ apiKey: "vb_live_fake", baseUrl: BASE_URL });
-    await expect(bad.customers.get("anyone")).rejects.toBeInstanceOf(
-      VelobaseAuthenticationError,
-    );
+    await expect(bad.customers.get("anyone")).rejects.toMatchObject({
+      name: "VelobaseError",
+      status: 401,
+      type: "auth_error",
+      code: "invalid_api_key",
+    });
   });
 });
 
@@ -177,20 +174,27 @@ describeIf("customers + billing v2", () => {
     expect(ded.isIdempotentReplay).toBe(false);
   });
 
-  it("404 when fetching non-existent customer", async () => {
-    await expect(vb.customers.get("definitely_not_there")).rejects.toBeInstanceOf(
-      VelobaseNotFoundError,
-    );
+  it("404 with code=customer_not_found when fetching non-existent customer", async () => {
+    await expect(vb.customers.get("definitely_not_there")).rejects.toMatchObject({
+      status: 404,
+      type: "not_found",
+      code: "customer_not_found",
+    });
   });
 
-  it("400 when freezing more than available", async () => {
+  it("400 with code=insufficient_balance when freezing more than available", async () => {
     await expect(
       vb.billing.freeze({
         customerId: CUSTOMER,
         amount: 99_999_999,
         transactionId: `${RUN}_too_big`,
       }),
-    ).rejects.toBeInstanceOf(VelobaseValidationError);
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "insufficient_balance",
+      // details carries the structured context — the whole point of v1.
+      details: expect.objectContaining({ requested: 99_999_999 }),
+    });
   });
 });
 

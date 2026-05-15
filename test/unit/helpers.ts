@@ -25,7 +25,11 @@ export interface MockFetchHandle {
  * snake_case, the way the wire actually sees them).
  */
 export function installMockFetch(
-  responses: Array<{ status?: number; body?: unknown }>,
+  responses: Array<{
+    status?: number;
+    body?: unknown;
+    headers?: Record<string, string>;
+  }>,
 ): MockFetchHandle {
   const calls: CapturedRequest[] = [];
   let i = 0;
@@ -57,7 +61,10 @@ export function installMockFetch(
     const payload = JSON.stringify(next.body ?? {});
     return new Response(payload, {
       status,
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(next.headers ?? {}),
+      },
     });
   });
 

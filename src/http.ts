@@ -1,11 +1,8 @@
-import {
-  VelobaseAuthenticationError,
-  VelobaseConflictError,
-  VelobaseError,
-  VelobaseInternalError,
-  VelobaseNotFoundError,
-  VelobaseValidationError,
-} from "./errors";
+import { VelobaseError } from "./errors";
+import type {
+  VelobaseErrorCode,
+  VelobaseErrorType,
+} from "./codes.generated";
 
 export interface HttpClientOptions {
   baseUrl: string;
@@ -91,25 +88,57 @@ function isRetryable(status: number): boolean {
   return status >= 500 || status === 429;
 }
 
-function throwForStatus(
-  status: number,
-  message: string,
-  type: string,
-): never {
-  switch (status) {
-    case 400:
-      throw new VelobaseValidationError(message);
-    case 401:
-      throw new VelobaseAuthenticationError(message);
-    case 404:
-      throw new VelobaseNotFoundError(message);
-    case 409:
-      throw new VelobaseConflictError(message);
-    case 500:
-      throw new VelobaseInternalError(message);
-    default:
-      throw new VelobaseError(message, status, type);
+/**
+ * Shape of the v1 error body the server sends back on non-2xx.
+ * See `velobase-internal/docs/error-system-design.md` §5.2.
+ */
+interface ServerErrorBody {
+  error?: {
+    code?: string;
+    type?: string;
+    message?: string;
+    details?: Record<string, unknown>;
+    retryable?: boolean;
+    request_id?: string;
+  };
+}
+
+/**
+ * Default `type` to assign when the server omits one. Picked by status
+ * bucket so the SDK consumer can still do `err.isType("not_found")`
+ * even against an older server that doesn't transmit `type`.
+ */
+function fallbackTypeForStatus(status: number): VelobaseErrorType {
+  if (status === 401) return "auth_error";
+  if (status === 403) return "permission_denied";
+  if (status === 404) return "not_found";
+  if (status === 409) return "conflict";
+  if (status === 422) return "unprocessable";
+  if (status === 429) return "rate_limited";
+  if (status >= 500 && status <= 599) {
+    return status >= 502 && status <= 504 ? "upstream_error" : "server_error";
   }
+  return "bad_request";
+}
+
+function hydrateError(status: number, body: ServerErrorBody): VelobaseError {
+  const err = body.error ?? {};
+  const type = (err.type as VelobaseErrorType | undefined) ?? fallbackTypeForStatus(status);
+  // Server contract is: `code` is the stable machine-readable string,
+  // `type` is the broad category. If the server is older / misbehaving
+  // and omits `code`, fall back to `type`; in the worst case it equals
+  // an HTTP-status-flavoured bucket and the consumer's `switch (code)`
+  // hits its default branch.
+  const code = (err.code as VelobaseErrorCode | undefined) ?? type;
+  return new VelobaseError({
+    code,
+    type,
+    status,
+    message: err.message ?? `HTTP ${status}`,
+    details: err.details,
+    retryable: err.retryable,
+    requestId: err.request_id,
+  });
 }
 
 export class HttpClient {
@@ -158,19 +187,19 @@ export class HttpClient {
         clearTimeout(timer);
 
         if (!res.ok) {
-          const json = (await res.json().catch(() => ({}))) as {
-            error?: { message?: string; type?: string };
-          };
-          const msg =
-            json.error?.message ?? `HTTP ${res.status}`;
-          const type = json.error?.type ?? "unknown_error";
+          const body = (await res.json().catch(() => ({}))) as ServerErrorBody;
+          const requestId =
+            body.error?.request_id ?? res.headers.get("X-Request-Id") ?? undefined;
+          const wrapped = hydrateError(res.status, {
+            error: { ...body.error, request_id: requestId },
+          });
 
           if (isRetryable(res.status) && attempt < this.maxRetries) {
-            lastError = new VelobaseError(msg, res.status, type);
+            lastError = wrapped;
             continue;
           }
 
-          throwForStatus(res.status, msg, type);
+          throw wrapped;
         }
 
         const json = await res.json();
@@ -188,11 +217,14 @@ export class HttpClient {
           continue;
         }
 
-        throw new VelobaseError(
-          `Request failed: ${lastError.message}`,
-          0,
-          "network_error",
-        );
+        throw new VelobaseError({
+          code: "network_error",
+          type: "upstream_error",
+          status: 0,
+          message: `Request failed: ${lastError.message}`,
+          retryable: true,
+          cause: lastError,
+        });
       }
     }
 

@@ -4,14 +4,7 @@ import {
   toCamelCaseKeys,
   toSnakeCaseKeys,
 } from "../../src/http";
-import {
-  VelobaseAuthenticationError,
-  VelobaseConflictError,
-  VelobaseError,
-  VelobaseInternalError,
-  VelobaseNotFoundError,
-  VelobaseValidationError,
-} from "../../src/errors";
+import { VelobaseError } from "../../src/errors";
 import { installMockFetch } from "./helpers";
 
 const DEFAULTS = {
@@ -126,49 +119,86 @@ describe("HttpClient request construction", () => {
 });
 
 describe("HttpClient error mapping", () => {
+  // All non-2xx responses produce a single VelobaseError instance carrying
+  // the server's stable `code`/`type` verbatim. Consumers branch on
+  // `err.code` (or `err.isType(...)` for coarse handling), never on
+  // `instanceof <SubClass>` (which no longer exists).
   it.each([
-    { status: 400, klass: VelobaseValidationError, name: "VelobaseValidationError" },
-    { status: 401, klass: VelobaseAuthenticationError, name: "VelobaseAuthenticationError" },
-    { status: 404, klass: VelobaseNotFoundError, name: "VelobaseNotFoundError" },
-    { status: 409, klass: VelobaseConflictError, name: "VelobaseConflictError" },
-    { status: 500, klass: VelobaseInternalError, name: "VelobaseInternalError" },
-  ])("maps HTTP $status to $name", async ({ status, klass }) => {
+    { status: 400, code: "amount_must_be_positive", type: "bad_request" },
+    { status: 401, code: "invalid_api_key", type: "auth_error" },
+    { status: 404, code: "customer_not_found", type: "not_found" },
+    { status: 409, code: "transaction_conflict", type: "conflict" },
+    { status: 429, code: "usage_limit_exceeded", type: "rate_limited" },
+    { status: 500, code: "server_error", type: "server_error" },
+  ])("propagates server code/type for HTTP $status", async ({ status, code, type }) => {
     installMockFetch([
       {
         status,
-        body: { error: { message: `boom-${status}`, type: "server_label" } },
+        body: {
+          error: {
+            code,
+            type,
+            message: `boom-${status}`,
+            details: { hint: "x" },
+            retryable: status >= 500,
+            request_id: "req_test_1",
+          },
+        },
       },
     ]);
-    // 500 retries by default; force no retries here to keep the assertion exact.
     const http = new HttpClient({ ...DEFAULTS, maxRetries: 0 });
-    await expect(http.request("POST", "/v1/x", { a: 1 })).rejects.toBeInstanceOf(klass);
-    try {
-      await http.request("POST", "/v1/x", { a: 1 });
-    } catch {
-      // already asserted above
-    }
+    await expect(http.request("POST", "/v1/x", { a: 1 })).rejects.toMatchObject({
+      name: "VelobaseError",
+      status,
+      code,
+      type,
+      message: `boom-${status}`,
+      details: { hint: "x" },
+      retryable: status >= 500,
+      requestId: "req_test_1",
+    });
   });
 
-  it("falls back to generic VelobaseError for non-mapped status codes", async () => {
+  it("falls back to status-derived type when server omits type", async () => {
     installMockFetch([
-      { status: 418, body: { error: { message: "I'm a teapot", type: "teapot" } } },
+      { status: 404, body: { error: { code: "customer_not_found", message: "nope" } } },
+    ]);
+    const http = new HttpClient({ ...DEFAULTS, maxRetries: 0 });
+    await expect(http.request("POST", "/v1/x", { a: 1 })).rejects.toMatchObject({
+      status: 404,
+      code: "customer_not_found",
+      type: "not_found",
+    });
+  });
+
+  it("falls back to type as code when server omits code", async () => {
+    installMockFetch([
+      { status: 418, body: { error: { type: "bad_request", message: "I'm a teapot" } } },
     ]);
     const http = new HttpClient({ ...DEFAULTS, maxRetries: 0 });
     await expect(http.request("POST", "/v1/x", { a: 1 })).rejects.toMatchObject({
       status: 418,
-      type: "teapot",
+      type: "bad_request",
+      code: "bad_request",
       message: "I'm a teapot",
     });
   });
 
-  it("uses the server-provided error.message when present", async () => {
+  it("threads request_id through, also from X-Request-Id header fallback", async () => {
     installMockFetch([
-      { status: 400, body: { error: { message: "amount must be positive", type: "validation_error" } } },
+      {
+        status: 400,
+        body: { error: { code: "amount_must_be_positive" } },
+        headers: { "x-request-id": "req_from_header" },
+      },
     ]);
     const http = new HttpClient({ ...DEFAULTS, maxRetries: 0 });
-    await expect(http.request("POST", "/v1/x", { a: 1 })).rejects.toThrow(
-      "amount must be positive",
-    );
+    try {
+      await http.request("POST", "/v1/x", { a: 1 });
+    } catch (err) {
+      expect(err).toBeInstanceOf(VelobaseError);
+      expect((err as VelobaseError).requestId).toBe("req_from_header");
+    }
   });
 
   it("falls back to HTTP <status> when no error body present", async () => {
@@ -218,26 +248,28 @@ describe("HttpClient retry logic", () => {
 
   it("does not retry 4xx (non-429) errors", async () => {
     const handle = installMockFetch([
-      { status: 400, body: { error: { message: "bad", type: "validation_error" } } },
+      { status: 400, body: { error: { code: "amount_must_be_positive", type: "bad_request" } } },
     ]);
     const http = new HttpClient({ ...DEFAULTS, maxRetries: 3 });
-    await expect(http.request("POST", "/v1/x", { a: 1 })).rejects.toBeInstanceOf(
-      VelobaseValidationError,
-    );
+    await expect(http.request("POST", "/v1/x", { a: 1 })).rejects.toMatchObject({
+      name: "VelobaseError",
+      status: 400,
+      code: "amount_must_be_positive",
+    });
     expect(handle.calls).toHaveLength(1);
   });
 
-  it("wraps network errors as VelobaseError(network_error)", async () => {
+  it("wraps network errors as VelobaseError(network_error) with retryable=true", async () => {
     globalThis.fetch = vi.fn(async () => {
       throw new TypeError("ECONNREFUSED");
     }) as unknown as typeof fetch;
     const http = new HttpClient({ ...DEFAULTS, maxRetries: 0 });
     await expect(http.request("POST", "/v1/x", { a: 1 })).rejects.toMatchObject({
+      name: "VelobaseError",
       status: 0,
-      type: "network_error",
+      code: "network_error",
+      type: "upstream_error",
+      retryable: true,
     });
-    await expect(http.request("POST", "/v1/x", { a: 1 })).rejects.toBeInstanceOf(
-      VelobaseError,
-    );
   });
 });

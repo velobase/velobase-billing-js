@@ -1,6 +1,6 @@
 {
   "name": "@velobaseai/billing",
-  "version": "0.1.5",
+  "version": "0.4.1",
   "description": "Velobase Billing SDK for JavaScript/TypeScript",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -22,7 +22,12 @@
   ],
   "scripts": {
     "build": "tsup",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run test/unit",
+    "test:unit": "vitest run test/unit",
+    "test:watch": "vitest test/unit",
+    "test:integration": "vitest run test/integration.test.ts",
+    "test:coverage": "vitest run test/unit --coverage",
     "clean": "rm -rf dist"
   },
   "keywords": [
@@ -42,7 +47,10 @@
     "node": ">=18"
   },
   "devDependencies": {
+    "@types/node": "^25.8.0",
+    "@vitest/coverage-v8": "^4.1.6",
     "tsup": "^8.0.0",
-    "typescript": "^5.5.0"
+    "typescript": "^5.5.0",
+    "vitest": "^4.1.6"
   }
 }

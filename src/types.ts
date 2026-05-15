@@ -13,6 +13,7 @@ export type BusinessType =
   | 'SUBSCRIPTION'
   | 'FREE_TRIAL'
   | 'ADMIN_GRANT'
+  | 'TOKEN_USAGE'
   | (string & {});
 
 const VALID_BUSINESS_TYPES = new Set([
@@ -23,6 +24,7 @@ const VALID_BUSINESS_TYPES = new Set([
   'SUBSCRIPTION',
   'FREE_TRIAL',
   'ADMIN_GRANT',
+  'TOKEN_USAGE',
 ]);
 
 export function assertBusinessType(value: string): void {
@@ -38,7 +40,7 @@ export interface FreezeParams {
   customerId: string;
   amount: number;
   transactionId: string;
-  creditTypes?: string[];
+  wallet?: string;
   businessType?: BusinessType;
   description?: string;
 }
@@ -61,6 +63,7 @@ export interface ConsumeResponse {
   transactionId: string;
   consumedAmount: number;
   returnedAmount?: number;
+  overageAmount?: number;
   consumeDetails: unknown[];
   consumedAt: string;
   isIdempotentReplay: boolean;
@@ -86,7 +89,7 @@ export interface DeductParams {
   customerId: string;
   amount: number;
   transactionId: string;
-  creditTypes?: string[];
+  wallet?: string;
   businessType?: BusinessType;
   description?: string;
 }
@@ -104,7 +107,8 @@ export interface DeductResponse {
 export interface DepositParams {
   customerId: string;
   amount: number;
-  creditType?: string;
+  wallet?: string;
+  source?: string;
   startsAt?: string;
   expiresAt?: string;
   idempotencyKey?: string;
@@ -117,7 +121,8 @@ export interface DepositParams {
 export interface DepositResponse {
   customerId: string;
   accountId: string;
-  creditType: string | null;
+  wallet: string;
+  source: string;
   totalAmount: number;
   addedAmount: number;
   startsAt: string | null;
@@ -128,16 +133,8 @@ export interface DepositResponse {
 
 // ─── Customer ────────────────────────────────────────────────────
 
-export interface CustomerBalance {
-  total: number;
-  used: number;
-  frozen: number;
-  available: number;
-}
-
-export interface CustomerAccount {
-  accountType: string;
-  creditType: string;
+export interface WalletSource {
+  source: string;
   total: number;
   used: number;
   frozen: number;
@@ -146,13 +143,20 @@ export interface CustomerAccount {
   expiresAt: string | null;
 }
 
+export interface WalletBalance {
+  total: number;
+  used: number;
+  frozen: number;
+  available: number;
+  sources: WalletSource[];
+}
+
 export interface CustomerResponse {
   id: string;
   name: string | null;
   email: string | null;
   metadata: Record<string, unknown> | null;
-  balance: CustomerBalance;
-  accounts: CustomerAccount[];
+  wallets: Record<string, WalletBalance>;
   createdAt: string;
 }
 
@@ -169,7 +173,8 @@ export interface LedgerEntry {
   id: string;
   operationType: string;
   amount: number;
-  creditType: string;
+  wallet: string;
+  source: string;
   transactionId: string | null;
   businessType: string;
   description: string | null;
@@ -192,4 +197,199 @@ export interface VelobaseOptions {
   baseUrl?: string;
   timeout?: number;
   maxRetries?: number;
+}
+
+// ─── Slot Subsystem ──────────────────────────────────────────────
+
+export type SlotEventType =
+  | 'GRANT_CAPACITY'
+  | 'REVOKE_CAPACITY'
+  | 'CLAIM'
+  | 'RELEASE';
+
+export type SlotPoolStatus = 'ACTIVE' | 'SUSPENDED';
+
+export interface SlotPoolView {
+  poolId: string;
+  wallet: string;
+  source: string;
+  capacity: number;
+  inUse: number;
+  available: number;
+  status: SlotPoolStatus;
+  isIdempotentReplay?: boolean;
+}
+
+export interface GrantCapacityParams {
+  customerId: string;
+  wallet: string;
+  source?: string;
+  amount: number;
+  idempotencyKey?: string;
+  description?: string;
+}
+
+export type GrantCapacityResponse = SlotPoolView;
+
+export interface RevokeCapacityParams extends GrantCapacityParams {}
+
+export type RevokeCapacityResponse = SlotPoolView;
+
+export interface ClaimSlotParams {
+  customerId: string;
+  wallet: string;
+  source?: string;
+  resourceId: string;
+  amount?: number;
+  description?: string;
+}
+
+export interface ClaimSlotResponse extends SlotPoolView {
+  holdingId: string;
+}
+
+export interface ReleaseSlotParams {
+  customerId: string;
+  wallet: string;
+  resourceId: string;
+}
+
+export interface ReleaseSlotResponse extends SlotPoolView {
+  holdingId: string;
+}
+
+export interface SlotPoolSummary {
+  poolId: string;
+  wallet: string;
+  source: string;
+  capacity: number;
+  inUse: number;
+  available: number;
+  status: SlotPoolStatus;
+}
+
+export interface GetCustomerSlotsResponse {
+  pools: SlotPoolSummary[];
+}
+
+export interface ListSlotEventsParams {
+  wallet?: string;
+  sources?: string[];
+  types?: SlotEventType[];
+  resourceId?: string;
+  fromAt?: string;
+  toAt?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface SlotEventEntry {
+  id: string;
+  type: SlotEventType;
+  wallet: string;
+  source: string;
+  amount: number;
+  resourceId: string | null;
+  description: string | null;
+  idempotencyKey: string | null;
+  createdAt: string;
+}
+
+export interface ListSlotEventsResponse {
+  items: SlotEventEntry[];
+  totalCount: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
+// ─── Entitlement Subsystem ───────────────────────────────────────
+
+export type EntitlementEventType = 'SET' | 'REMOVE';
+
+export interface EntitlementView {
+  entitlementId: string;
+  featureKey: string;
+  value: string;
+  validFrom: string | null;
+  validUntil: string | null;
+  source: string;
+  description: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface SetEntitlementParams {
+  customerId: string;
+  featureKey: string;
+  value: string;
+  validFrom?: string | null;
+  validUntil?: string | null;
+  source?: string;
+  description?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SetEntitlementResponse extends EntitlementView {
+  isCreated: boolean;
+  oldValue: string | null;
+}
+
+export interface GetEntitlementParams {
+  customerId: string;
+  featureKey: string;
+}
+
+export interface GetEntitlementResponse {
+  entitlement: EntitlementView | null;
+}
+
+export interface ListEntitlementsParams {
+  customerId: string;
+  featureKeys?: string[];
+  includeExpired?: boolean;
+}
+
+export interface ListEntitlementsItem extends EntitlementView {
+  isActive: boolean;
+}
+
+export interface ListEntitlementsResponse {
+  items: ListEntitlementsItem[];
+}
+
+export interface RemoveEntitlementParams {
+  customerId: string;
+  featureKey: string;
+}
+
+export interface RemoveEntitlementResponse {
+  removed: boolean;
+  oldValue: string | null;
+}
+
+export interface ListEntitlementEventsParams {
+  customerId: string;
+  featureKey?: string;
+  types?: EntitlementEventType[];
+  fromAt?: string;
+  toAt?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface EntitlementEventEntry {
+  id: string;
+  featureKey: string;
+  type: EntitlementEventType;
+  oldValue: string | null;
+  newValue: string | null;
+  source: string | null;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface ListEntitlementEventsResponse {
+  items: EntitlementEventEntry[];
+  totalCount: number;
+  hasMore: boolean;
+  nextCursor: string | null;
 }

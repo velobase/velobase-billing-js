@@ -3,6 +3,8 @@ import {
   assertBusinessType,
 } from "./types";
 import type {
+  ClaimSlotParams,
+  ClaimSlotResponse,
   ConsumeParams,
   ConsumeResponse,
   CustomerResponse,
@@ -12,12 +14,32 @@ import type {
   DepositResponse,
   FreezeParams,
   FreezeResponse,
+  GetCustomerSlotsResponse,
+  GetEntitlementParams,
+  GetEntitlementResponse,
+  GrantCapacityParams,
+  GrantCapacityResponse,
   LedgerParams,
   LedgerResponse,
+  ListEntitlementEventsParams,
+  ListEntitlementEventsResponse,
+  ListEntitlementsParams,
+  ListEntitlementsResponse,
+  ListSlotEventsParams,
+  ListSlotEventsResponse,
+  ReleaseSlotParams,
+  ReleaseSlotResponse,
+  RemoveEntitlementParams,
+  RemoveEntitlementResponse,
+  RevokeCapacityParams,
+  RevokeCapacityResponse,
+  SetEntitlementParams,
+  SetEntitlementResponse,
   UnfreezeParams,
   UnfreezeResponse,
   VelobaseOptions,
 } from "./types";
+
 
 const DEFAULT_BASE_URL = "https://api.velobase.io";
 const DEFAULT_TIMEOUT = 30_000;
@@ -104,9 +126,139 @@ class CustomersResource {
   }
 }
 
+class SlotResource {
+  constructor(private http: HttpClient) {}
+
+  async grantCapacity(params: GrantCapacityParams): Promise<GrantCapacityResponse> {
+    return this.http.request<GrantCapacityResponse>(
+      "POST",
+      "/v1/slot/grant",
+      params,
+    );
+  }
+
+  async revokeCapacity(params: RevokeCapacityParams): Promise<RevokeCapacityResponse> {
+    return this.http.request<RevokeCapacityResponse>(
+      "POST",
+      "/v1/slot/revoke",
+      params,
+    );
+  }
+
+  async claim(params: ClaimSlotParams): Promise<ClaimSlotResponse> {
+    return this.http.request<ClaimSlotResponse>(
+      "POST",
+      "/v1/slot/claim",
+      params,
+    );
+  }
+
+  async release(params: ReleaseSlotParams): Promise<ReleaseSlotResponse> {
+    return this.http.request<ReleaseSlotResponse>(
+      "POST",
+      "/v1/slot/release",
+      params,
+    );
+  }
+
+  async getCustomer(
+    customerId: string,
+    opts?: { wallet?: string },
+  ): Promise<GetCustomerSlotsResponse> {
+    const qs = new URLSearchParams();
+    if (opts?.wallet) qs.set("wallet", opts.wallet);
+    const query = qs.toString();
+    const path = `/v1/slot/customer/${encodeURIComponent(customerId)}${query ? `?${query}` : ""}`;
+    return this.http.request<GetCustomerSlotsResponse>("GET", path);
+  }
+
+  async listEvents(
+    customerId: string,
+    params?: ListSlotEventsParams,
+  ): Promise<ListSlotEventsResponse> {
+    const qs = new URLSearchParams();
+    if (params?.wallet) qs.set("wallet", params.wallet);
+    if (params?.resourceId) qs.set("resource_id", params.resourceId);
+    if (params?.cursor) qs.set("cursor", params.cursor);
+    if (params?.limit !== undefined) qs.set("limit", String(params.limit));
+    if (params?.types && params.types.length > 0) {
+      qs.set("types", params.types.join(","));
+    }
+    if (params?.sources && params.sources.length > 0) {
+      qs.set("sources", params.sources.join(","));
+    }
+    if (params?.fromAt) qs.set("from_at", params.fromAt);
+    if (params?.toAt) qs.set("to_at", params.toAt);
+    const query = qs.toString();
+    const path = `/v1/slot/events/${encodeURIComponent(customerId)}${query ? `?${query}` : ""}`;
+    return this.http.request<ListSlotEventsResponse>("GET", path);
+  }
+}
+
+class EntitlementResource {
+  constructor(private http: HttpClient) {}
+
+  async setEntitlement(params: SetEntitlementParams): Promise<SetEntitlementResponse> {
+    return this.http.request<SetEntitlementResponse>(
+      "POST",
+      "/v1/entitlement/set",
+      params,
+    );
+  }
+
+  async getEntitlement(
+    params: GetEntitlementParams,
+  ): Promise<GetEntitlementResponse> {
+    const path = `/v1/entitlement/${encodeURIComponent(params.customerId)}/${encodeURIComponent(params.featureKey)}`;
+    return this.http.request<GetEntitlementResponse>("GET", path);
+  }
+
+  async listEntitlements(
+    params: ListEntitlementsParams,
+  ): Promise<ListEntitlementsResponse> {
+    const qs = new URLSearchParams();
+    if (params.featureKeys && params.featureKeys.length > 0) {
+      qs.set("feature_keys", params.featureKeys.join(","));
+    }
+    if (params.includeExpired) qs.set("include_expired", "true");
+    const query = qs.toString();
+    const path = `/v1/entitlement/${encodeURIComponent(params.customerId)}${query ? `?${query}` : ""}`;
+    return this.http.request<ListEntitlementsResponse>("GET", path);
+  }
+
+  async removeEntitlement(
+    params: RemoveEntitlementParams,
+  ): Promise<RemoveEntitlementResponse> {
+    return this.http.request<RemoveEntitlementResponse>(
+      "POST",
+      "/v1/entitlement/remove",
+      params,
+    );
+  }
+
+  async listEvents(
+    params: ListEntitlementEventsParams,
+  ): Promise<ListEntitlementEventsResponse> {
+    const qs = new URLSearchParams();
+    if (params.featureKey) qs.set("feature_key", params.featureKey);
+    if (params.cursor) qs.set("cursor", params.cursor);
+    if (params.limit !== undefined) qs.set("limit", String(params.limit));
+    if (params.types && params.types.length > 0) {
+      qs.set("types", params.types.join(","));
+    }
+    if (params.fromAt) qs.set("from_at", params.fromAt);
+    if (params.toAt) qs.set("to_at", params.toAt);
+    const query = qs.toString();
+    const path = `/v1/entitlement/${encodeURIComponent(params.customerId)}/events${query ? `?${query}` : ""}`;
+    return this.http.request<ListEntitlementEventsResponse>("GET", path);
+  }
+}
+
 export class Velobase {
   readonly billing: BillingResource;
   readonly customers: CustomersResource;
+  readonly slot: SlotResource;
+  readonly entitlement: EntitlementResource;
 
   constructor(opts: VelobaseOptions) {
     if (!opts.apiKey) {
@@ -124,5 +276,7 @@ export class Velobase {
 
     this.billing = new BillingResource(http);
     this.customers = new CustomersResource(http);
+    this.slot = new SlotResource(http);
+    this.entitlement = new EntitlementResource(http);
   }
 }

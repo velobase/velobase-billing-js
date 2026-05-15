@@ -22,6 +22,30 @@ function toCamelCase(str: string): string {
   return str.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
 }
 
+/**
+ * Field names whose VALUE is a user-controlled dict whose KEYS are arbitrary
+ * data (not API field names). Their contents must be passed through verbatim,
+ * including any nested objects, because we have no way to tell which keys
+ * inside are "schema" vs "data".
+ *
+ * Right now this is just `metadata: Record<string, unknown>`. Anything we
+ * add here must satisfy the same property: the user picks the keys and the
+ * value tree is opaque to us.
+ */
+const PRESERVE_VALUE_VERBATIM = new Set(["metadata"]);
+
+/**
+ * Field names whose VALUE is a dict where the IMMEDIATE child keys are
+ * user-controlled business identifiers but whose grandchildren are still
+ * structured API objects. We preserve the first-level keys but keep
+ * recursing into the values.
+ *
+ * Example: `wallets: Record<string, WalletBalance>` — the wallet name
+ * (e.g. `email_counter`) is data the user picked, but `WalletBalance` is
+ * a structured shape whose `starts_at` etc. still need case-converting.
+ */
+const PRESERVE_IMMEDIATE_CHILD_KEYS = new Set(["wallets"]);
+
 function convertKeys(
   obj: unknown,
   converter: (key: string) => string,
@@ -32,7 +56,23 @@ function convertKeys(
   if (obj !== null && typeof obj === "object") {
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
-      result[converter(key)] = convertKeys(value, converter);
+      const newKey = converter(key);
+      if (PRESERVE_VALUE_VERBATIM.has(key)) {
+        result[newKey] = value;
+      } else if (
+        PRESERVE_IMMEDIATE_CHILD_KEYS.has(key) &&
+        value !== null &&
+        typeof value === "object" &&
+        !Array.isArray(value)
+      ) {
+        result[newKey] = Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).map(
+            ([dictKey, dictValue]) => [dictKey, convertKeys(dictValue, converter)],
+          ),
+        );
+      } else {
+        result[newKey] = convertKeys(value, converter);
+      }
     }
     return result;
   }

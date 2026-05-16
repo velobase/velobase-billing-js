@@ -63,6 +63,10 @@ export type VelobaseErrorCode =
   | "no_consumable_freeze_records"
   | "freeze_records_already_consumed"
   | "no_unfreezable_records"
+  | "freeze_auto_unfrozen"
+  // ─── Auto-settlement (400) ───────────────────────────
+  | "invalid_auto_settlement"
+  | "invalid_auto_settlement_ttl"
   // ─── Slot (400) ──────────────────────────────────────
   | "slot_capacity_below_in_use"
   | "slot_insufficient_capacity"

@@ -43,12 +43,29 @@ export interface FreezeParams {
   wallet?: string;
   businessType?: BusinessType;
   description?: string;
+  /**
+   * If set, the platform auto-unfreezes this freeze after `unfreezeAfterSeconds`
+   * seconds if it is still FROZEN. Mutually exclusive with `consumeAfterSeconds`.
+   * Range: [1, 30 days].
+   */
+  unfreezeAfterSeconds?: number;
+  /**
+   * If set, the platform auto-consumes the full frozen amount after
+   * `consumeAfterSeconds` seconds if it is still FROZEN. Mutually exclusive
+   * with `unfreezeAfterSeconds`. Range: [1, 7 days]. Irreversible — prefer
+   * `unfreezeAfterSeconds` unless your business model commits on inaction.
+   */
+  consumeAfterSeconds?: number;
 }
 
 export interface FreezeResponse {
   transactionId: string;
   frozenAmount: number;
   freezeDetails: unknown[];
+  /** Absolute ISO timestamp when scheduler will auto-unfreeze, or null. */
+  unfreezeAfter: string | null;
+  /** Absolute ISO timestamp when scheduler will auto-consume, or null. */
+  consumeAfter: string | null;
   isIdempotentReplay: boolean;
 }
 

@@ -45,12 +45,41 @@ const DEFAULT_BASE_URL = "https://api.velobase.io";
 const DEFAULT_TIMEOUT = 30_000;
 const DEFAULT_MAX_RETRIES = 2;
 
+// Single-shot warning dedupe per process. We never want to spam the console
+// when freeze() is called in a hot loop without a TTL field.
+let autoSettlementWarningEmitted = false;
+
 class BillingResource {
   constructor(private http: HttpClient) {}
 
   async freeze(params: FreezeParams): Promise<FreezeResponse> {
     if (params.businessType !== undefined) {
       assertBusinessType(params.businessType);
+    }
+    // Mutual exclusion: both auto-settlement TTLs at once is meaningless.
+    // Fail loud on the client to avoid an extra HTTP round-trip.
+    if (
+      params.unfreezeAfterSeconds !== undefined &&
+      params.consumeAfterSeconds !== undefined
+    ) {
+      throw new Error(
+        "freeze() accepts at most one of unfreezeAfterSeconds / consumeAfterSeconds, not both",
+      );
+    }
+    // Deprecation warning: neither TTL → freeze will never auto-settle. Caller
+    // is on the hook to call consume() or unfreeze() themselves. Future major
+    // versions may require an explicit choice.
+    if (
+      params.unfreezeAfterSeconds === undefined &&
+      params.consumeAfterSeconds === undefined &&
+      !autoSettlementWarningEmitted
+    ) {
+      autoSettlementWarningEmitted = true;
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[velobase-billing] freeze() called without unfreezeAfterSeconds or consumeAfterSeconds. " +
+          "This freeze will never auto-settle. Future major versions may require an explicit choice.",
+      );
     }
     return this.http.request<FreezeResponse>(
       "POST",

@@ -123,7 +123,11 @@ export interface DeductResponse {
 
 export interface DepositParams {
   customerId: string;
-  amount: number;
+  /** Legacy amount in cents. Prefer amountUsd / amountCents / amountCredits. */
+  amount?: number;
+  amountUsd?: number;
+  amountCents?: number;
+  amountCredits?: number;
   wallet?: string;
   source?: string;
   startsAt?: string;

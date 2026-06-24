@@ -124,10 +124,14 @@ class CustomersResource {
     if (params.idempotencyKey) {
       headers["Idempotency-Key"] = params.idempotencyKey;
     }
+    const { creditType, ...body } = params;
     return this.http.request<DepositResponse>(
       "POST",
       "/v1/customers/deposit",
-      params,
+      {
+        ...body,
+        wallet: body.wallet ?? creditType,
+      },
       headers,
     );
   }

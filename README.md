@@ -32,7 +32,7 @@ const deposit = await vb.customers.deposit({
 
 // 2. Check balance
 const customer = await vb.customers.get('user_123');
-console.log(customer.balance.available); // 1000
+console.log(customer.wallets.default.available); // 1000
 
 // 3. Generate transactionId once and persist before freezing
 const transactionId = `user_123_${crypto.randomUUID()}`;
@@ -69,7 +69,7 @@ It also supports a **direct deduct** pattern for immediate deduction without fre
 deposit → deduct  (immediate deduction)
 ```
 
-1. **Deposit** — Add credits to a customer's account. Creates the customer automatically on first deposit. Supports `creditType` to specify the credit category, and `startsAt`/`expiresAt` for time-limited credits.
+1. **Deposit** — Add integer credits to a customer's wallet. Creates the customer automatically on first deposit. Supports `wallet`/`source` for balance categories, and `startsAt`/`expiresAt` for time-limited credits. `creditType` is kept only as a deprecated alias for `wallet`.
 2. **Freeze** — Pre-authorize an amount before performing work. The frozen credits are deducted from `available` but not yet `used`. Each freeze is identified by a unique `transactionId` you provide. Supports `creditTypes` to freeze from specific credit categories.
 3. **Consume** — After the work is done, settle the frozen amount. You can pass `actualAmount` to charge less than what was frozen; the difference is automatically returned.
 4. **Unfreeze** — If the work fails or is cancelled, release the full frozen amount back to the customer.
@@ -106,18 +106,20 @@ console.log(result.addedAmount);        // 500
 console.log(result.isIdempotentReplay); // false on first call, true on retries
 ```
 
-### Deposit with credit type and expiry
+### Deposit with wallet and expiry
 
 ```typescript
 const result = await vb.customers.deposit({
   customerId: 'user_123',
   amount: 1000,
-  creditType: 'BONUS',
+  wallet: 'bonus',
+  source: 'annual_campaign',
   startsAt: '2025-01-01T00:00:00Z',
   expiresAt: '2025-12-31T23:59:59Z',
   description: 'Annual bonus credits',
 });
-console.log(result.creditType); // 'BONUS'
+console.log(result.wallet); // 'bonus'
+console.log(result.source); // 'annual_campaign'
 console.log(result.startsAt);  // '2025-01-01T00:00:00.000Z'
 console.log(result.expiresAt); // '2025-12-31T23:59:59.000Z'
 ```
@@ -144,7 +146,7 @@ const transactionId = `${CUSTOMER}_${crypto.randomUUID().replace(/-/g, '')}`;
 
 // Check balance before starting
 const before = await vb.customers.get(CUSTOMER);
-console.log('Available:', before.balance.available);
+console.log('Available:', before.wallets.default.available);
 
 // Freeze the estimated cost
 await vb.billing.freeze({
@@ -164,7 +166,7 @@ console.log('Returned:', result.returnedAmount); // 27
 
 // Verify final balance
 const after = await vb.customers.get(CUSTOMER);
-console.log('Available:', after.balance.available);
+console.log('Available:', after.wallets.default.available);
 ```
 
 ### Direct deduct (without freezing)
@@ -202,7 +204,7 @@ const freeze = await vb.billing.freeze({
 // List all ledger entries (default limit=20)
 const ledger = await vb.customers.ledger('user_123');
 for (const entry of ledger.items) {
-  console.log(entry.operationType, entry.amount, entry.creditType, entry.createdAt);
+  console.log(entry.operationType, entry.amount, entry.wallet, entry.source, entry.createdAt);
 }
 console.log('Total:', ledger.totalCount);
 
@@ -224,19 +226,19 @@ if (page1.hasMore) {
 ```typescript
 const customer = await vb.customers.get('user_123');
 
-// Aggregate balance across all accounts
-customer.balance.total;     // total deposited
-customer.balance.used;      // total consumed
-customer.balance.frozen;    // currently frozen (pending)
-customer.balance.available; // total - used - frozen
+// Wallets are keyed by wallet/category name.
+const defaultWallet = customer.wallets.default;
+defaultWallet.total;     // total deposited
+defaultWallet.used;      // total consumed
+defaultWallet.frozen;    // currently frozen (pending)
+defaultWallet.available; // total - used - frozen
 
-// Individual accounts (e.g., different credit types/expiry)
-for (const account of customer.accounts) {
-  console.log(account.accountType); // 'CREDIT'
-  console.log(account.creditType);  // 'DEFAULT', 'BONUS', etc.
-  console.log(account.available);
-  console.log(account.startsAt);    // null or ISO date string
-  console.log(account.expiresAt);   // null or ISO date string
+// Sources inside each wallet preserve validity windows.
+for (const source of defaultWallet.sources) {
+  console.log(source.source);      // 'default', 'stripe_checkout', etc.
+  console.log(source.available);
+  console.log(source.startsAt);    // null or ISO date string
+  console.log(source.expiresAt);   // null or ISO date string
 }
 ```
 
@@ -249,8 +251,10 @@ Deposit credits. Creates the customer if they don't exist.
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `customerId` | `string` | Yes | Your unique customer identifier |
-| `amount` | `number` | Yes | Amount to deposit (must be > 0) |
-| `creditType` | `string` | No | Credit category (e.g. "DEFAULT", "BONUS"). Defaults to "DEFAULT" on server. |
+| `amount` | `number` | Yes | Integer credits to deposit (must be > 0) |
+| `wallet` | `string` | No | Wallet/category to credit. Defaults to `"default"` on server. |
+| `source` | `string` | No | Optional source label for this grant. Defaults to `"default"` on server. |
+| `creditType` | `string` | No | Deprecated alias for `wallet`, kept for compatibility. |
 | `startsAt` | `string` | No | ISO datetime string. When the credits become active. |
 | `expiresAt` | `string` | No | ISO datetime string. When the credits expire. Must be after `startsAt`. |
 | `idempotencyKey` | `string` | No | Prevents duplicate deposits on retry |
@@ -259,7 +263,7 @@ Deposit credits. Creates the customer if they don't exist.
 | `metadata` | `object` | No | Arbitrary key-value metadata |
 | `description` | `string` | No | Description for the deposit |
 
-**Returns:** `{ customerId, accountId, creditType, totalAmount, addedAmount, startsAt, expiresAt, recordId, isIdempotentReplay }`
+**Returns:** `{ customerId, accountId, wallet, source, totalAmount, addedAmount, startsAt, expiresAt, recordId, isIdempotentReplay }`
 
 ### `vb.customers.get(customerId): Promise<CustomerResponse>`
 
@@ -281,7 +285,7 @@ Query a customer's transaction history with filtering and cursor-based paginatio
 
 **Returns:** `{ items: LedgerEntry[], totalCount, hasMore, nextCursor }`
 
-Each `LedgerEntry` has: `id`, `operationType`, `amount`, `creditType`, `transactionId`, `businessType`, `description`, `accountId`, `status`, `createdAt`
+Each `LedgerEntry` has: `id`, `operationType`, `amount`, `wallet`, `source`, `transactionId`, `businessType`, `description`, `accountId`, `status`, `createdAt`
 
 ### `vb.billing.freeze(params): Promise<FreezeResponse>`
 

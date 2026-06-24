@@ -80,6 +80,20 @@ describe("customers.deposit", () => {
     expect(calls[0]!.body).toMatchObject({ idempotency_key: "dep-1" });
   });
 
+  it("maps deprecated creditType to wallet on the wire", async () => {
+    const { calls } = installMockFetch([{ body: {} }]);
+    await client().customers.deposit({
+      customerId: "c1",
+      amount: 100,
+      creditType: "legacy_bonus",
+    });
+    expect(calls[0]!.body).toEqual({
+      customer_id: "c1",
+      amount: 100,
+      wallet: "legacy_bonus",
+    });
+  });
+
   it("omits Idempotency-Key header when not provided", async () => {
     const { calls } = installMockFetch([{ body: {} }]);
     await client().customers.deposit({ customerId: "c1", amount: 100 });
